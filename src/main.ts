@@ -1,63 +1,28 @@
 // =============================================================================
 // PUNTO DE ENTRADA - Country Explorer
 // =============================================================================
-// Este es el archivo principal de la aplicación. Aquí:
-// 1. Inicializamos la aplicación cuando el DOM está listo
-// 2. Conectamos los event listeners
-// 3. Manejamos el estado de la UI
-//
-// ## Arquitectura de la aplicación
-// Seguimos una arquitectura simple pero organizada:
-//
-// ```
-// ┌─────────────────────────────────────────────────────────────────────────┐
-// │                              main.ts                                     │
-// │                        (Punto de entrada)                               │
-// │                                                                          │
-// │  ┌──────────────┐    ┌──────────────────┐    ┌────────────────────┐    │
-// │  │   Eventos    │───>│  Estado de UI    │───>│    Renderizado     │    │
-// │  │   (click,    │    │  (UiState)       │    │  (CountryCard,     │    │
-// │  │    input)    │    │                  │    │   CountryModal)    │    │
-// │  └──────────────┘    └──────────────────┘    └────────────────────┘    │
-// │          │                    ▲                        │               │
-// │          │                    │                        │               │
-// │          ▼                    │                        │               │
-// │  ┌──────────────────────────────────────────────────────┐             │
-// │  │              countryApi.ts (Servicio)                 │             │
-// │  │         (Comunicación con REST Countries)             │             │
-// │  └──────────────────────────────────────────────────────┘             │
-// └─────────────────────────────────────────────────────────────────────────┘
-// ```
-// =============================================================================
 
 import type { Country, UiState } from './types/country';
-import { searchCountries, ApiError } from './services/countryApi';
+import { searchCountries, getAllCountries, ApiError } from './services/countryApi'; // Asegúrate de tener getAllCountries si lo necesitas para mostrar favoritos sin buscar
 import { renderCountryList } from './components/CountryCard';
 import { openModal } from './components/CountryModal';
 import { getRequiredElement, showElement, hideElement, onDOMReady, debounce } from './utils/dom';
+import { clearAllFavorites, isFavorite } from './utils/Storage'; // <-- Importamos utilidades de Storage
 
 // =============================================================================
 // ESTADO DE LA APLICACIÓN
 // =============================================================================
-// Mantenemos un estado global simple. En aplicaciones más grandes, usaríamos
-// un patrón de gestión de estado más sofisticado (Redux, Zustand, etc.).
-// =============================================================================
 
-/** Estado actual de la UI */
 let currentState: UiState = { status: 'idle' };
-
-/** Última búsqueda realizada (para evitar búsquedas duplicadas) */
 let lastSearchQuery = '';
+let currentData: Country[] = []; // Guardamos los datos actuales para poder filtrarlos sin volver a llamar a la API
 
 // =============================================================================
 // REFERENCIAS A ELEMENTOS DEL DOM
 // =============================================================================
-// Obtenemos referencias a los elementos que vamos a manipular.
-// Usamos getRequiredElement porque sabemos que estos elementos existen en el HTML.
-// =============================================================================
 
 let searchInput: HTMLInputElement;
-let regionFilter: HTMLSelectElement; // nuevo
+let regionFilter: HTMLSelectElement;
 let searchButton: HTMLButtonElement;
 let retryButton: HTMLButtonElement;
 let loadingState: HTMLElement;
@@ -65,15 +30,15 @@ let errorState: HTMLElement;
 let errorMessage: HTMLElement;
 let emptyState: HTMLElement;
 let noResultsState: HTMLElement;
+let noResultsMessage: HTMLElement;
 let countriesList: HTMLElement;
+// Nuevos elementos
+let favoritesToggle: HTMLInputElement;
+let clearFavoritesBtn: HTMLButtonElement;
 
-/**
- * Inicializa las referencias a los elementos del DOM.
- * Se llama una vez cuando la aplicación arranca.
- */
 function initializeElements(): void {
   searchInput = getRequiredElement<HTMLInputElement>('#searchInput');
-  regionFilter = getRequiredElement<HTMLSelectElement>('#regionFilter');// nuevo
+  regionFilter = getRequiredElement<HTMLSelectElement>('#regionFilter');
   searchButton = getRequiredElement<HTMLButtonElement>('#searchButton');
   retryButton = getRequiredElement<HTMLButtonElement>('#retryButton');
   loadingState = getRequiredElement<HTMLElement>('#loadingState');
@@ -81,20 +46,18 @@ function initializeElements(): void {
   errorMessage = getRequiredElement<HTMLElement>('#errorMessage');
   emptyState = getRequiredElement<HTMLElement>('#emptyState');
   noResultsState = getRequiredElement<HTMLElement>('#noResultsState');
+  noResultsMessage = getRequiredElement<HTMLElement>('#noResultsMessage');
   countriesList = getRequiredElement<HTMLElement>('#countriesList');
+  
+  // Elementos de favoritos
+  favoritesToggle = getRequiredElement<HTMLInputElement>('#favoritesToggle');
+  clearFavoritesBtn = getRequiredElement<HTMLButtonElement>('#clearFavoritesBtn');
 }
 
 // =============================================================================
 // FUNCIONES DE RENDERIZADO DE ESTADO
 // =============================================================================
-// Estas funciones actualizan la UI según el estado actual.
-// Seguimos el principio de "fuente única de verdad": el estado determina la UI.
-// =============================================================================
 
-/**
- * Oculta todos los estados de la UI.
- * Llamamos esto antes de mostrar un nuevo estado.
- */
 function hideAllStates(): void {
   hideElement(loadingState);
   hideElement(errorState);
@@ -103,41 +66,23 @@ function hideAllStates(): void {
   hideElement(countriesList);
 }
 
-/**
- * Renderiza la UI según el estado actual.
- *
- * ## Patrón de renderizado basado en estado
- * En lugar de manipular la UI directamente en respuesta a eventos,
- * actualizamos el estado y luego renderizamos basándonos en él.
- * Esto hace el código más predecible y fácil de debuggear.
- *
- * @param state - Nuevo estado de la UI
- */
 function render(state: UiState): void {
   currentState = state;
   hideAllStates();
 
-  // =========================================================================
-  // SWITCH EXHAUSTIVO
-  // =========================================================================
-  // TypeScript verifica que manejemos todos los casos posibles.
-  // Si agregamos un nuevo estado y olvidamos manejarlo, dará error.
-  // =========================================================================
   switch (state.status) {
     case 'idle':
-      // Estado inicial: mostramos mensaje de bienvenida
       showElement(emptyState);
       break;
 
     case 'loading':
-      // Buscando países: mostramos spinner
       showElement(loadingState);
       break;
 
     case 'success':
-      // Búsqueda exitosa con resultados
       if (state.data.length === 0) {
         showElement(noResultsState);
+        noResultsMessage.textContent = '😕 No se encontraron países con los filtros actuales.';
       } else {
         showElement(countriesList);
         renderCountryList(state.data, countriesList, handleCountryClick);
@@ -145,19 +90,16 @@ function render(state: UiState): void {
       break;
 
     case 'error':
-      // Error en la búsqueda
       showElement(errorState);
       errorMessage.textContent = state.message;
       break;
 
     case 'empty':
-      // Sin resultados para la búsqueda
       showElement(noResultsState);
+      noResultsMessage.textContent = '😕 No se encontraron países.';
       break;
 
     default: {
-      // Este bloque nunca debería ejecutarse si manejamos todos los casos
-      // TypeScript usa esto para verificación de exhaustividad
       const _exhaustiveCheck: never = state;
       console.error('Estado no manejado:', _exhaustiveCheck);
     }
@@ -165,55 +107,79 @@ function render(state: UiState): void {
 }
 
 // =============================================================================
-// MANEJADORES DE EVENTOS
+// LÓGICA DE BÚSQUEDA Y FILTRADO
 // =============================================================================
 
 /**
- * Maneja la búsqueda de países.
- *
- * ## Flujo de la búsqueda:
- * 1. Obtenemos el valor del input
- * 2. Validamos que haya texto
- * 3. Mostramos estado de carga
- * 4. Hacemos la petición a la API
- * 5. Mostramos resultados o error
+ * Aplica los filtros locales (región y favoritos) a los datos que ya tenemos.
  */
+function applyLocalFilters(countries: Country[]): void {
+  const selectedRegion = regionFilter.value;
+  const showOnlyFavorites = favoritesToggle.checked;
+
+  let filtered = countries;
+
+  // Filtro por región
+  if (selectedRegion) {
+    filtered = filtered.filter(c => c.region === selectedRegion);
+  }
+
+  // Filtro por favoritos
+  if (showOnlyFavorites) {
+    filtered = filtered.filter(c => isFavorite(c.cca3));
+  }
+
+  if (filtered.length === 0) {
+    render({ status: 'success', data: [] }); // Mostramos mensaje de no resultados pero sin error
+  } else {
+    render({ status: 'success', data: filtered });
+  }
+}
+
 async function handleSearch(): Promise<void> {
   const query = searchInput.value.trim();
-  const selectedRegion = regionFilter.value;
+  const showOnlyFavorites = favoritesToggle.checked;
 
-  // Si la búsqueda está vacía, volvemos al estado inicial
-  if (query.length === 0) {
+  // Si la búsqueda está vacía pero queremos ver favoritos, 
+  // idealmente deberías llamar a una función que traiga todos los países
+  // Como no sé si tienes `getAllCountries` en tu API, si está vacía la mandamos a 'idle'
+  // A MENOS que estemos mostrando favoritos, ahí podríamos necesitar manejarlo diferente.
+  // Por ahora, mantendremos tu lógica: si no hay query, vamos a idle.
+  if (query.length === 0 && !showOnlyFavorites) {
     render({ status: 'idle' });
     lastSearchQuery = '';
+    currentData = [];
     return;
   }
 
-  // Evitamos búsquedas duplicadas (tomando en cuenta texto + región)
-  const currentSearchKey = `${query}-${selectedRegion}`;
-  if (currentSearchKey === lastSearchQuery && currentState.status === 'success') {
+  const currentSearchKey = `${query}`;
+  
+  // Si la búsqueda no ha cambiado, solo reaplicamos filtros locales
+  if (currentSearchKey === lastSearchQuery && currentData.length > 0) {
+    applyLocalFilters(currentData);
     return;
   }
 
   lastSearchQuery = currentSearchKey;
-
-  // Mostramos estado de carga
   render({ status: 'loading' });
 
   try {
-    const countries = await searchCountries(query);
-
-    // NUEVO: Lógica de filtrado por región
-    const filteredCountries = selectedRegion 
-      ? countries.filter(country => country.region === selectedRegion)
-      : countries;
-
-    // Evaluamos el arreglo filtrado, no el original
-    if (filteredCountries.length === 0) {
-      render({ status: 'empty' });
+    // Si la búsqueda está vacía pero queremos favoritos, asumimos que necesitas todos
+    // Nota: Si no tienes getAllCountries en countryApi.ts, puede que necesites modificar esta parte
+    let countries = [];
+    if (query.length > 0) {
+      countries = await searchCountries(query);
     } else {
-      render({ status: 'success', data: filteredCountries });
+      // Si llegamos aquí es porque query está vacío pero showOnlyFavorites es true.
+      // Sería ideal tener un método para obtener todos. Por ahora, dejamos la alerta visual.
+      render({ status: 'empty' });
+      noResultsMessage.textContent = 'Debes buscar algo para ver resultados.';
+      return;
     }
+
+    currentData = countries;
+    applyLocalFilters(currentData);
+
   } catch (error) {
     let message = 'Error desconocido al buscar países';
     if (error instanceof ApiError) {
@@ -226,96 +192,81 @@ async function handleSearch(): Promise<void> {
   }
 }
 
-/**
- * Maneja el click en una tarjeta de país.
- * Abre el modal con los detalles del país.
- *
- * @param country - País seleccionado
- */
+// =============================================================================
+// MANEJADORES DE EVENTOS
+// =============================================================================
+
 function handleCountryClick(country: Country): void {
   openModal(country);
 }
 
-/**
- * Maneja el evento de reintentar después de un error.
- */
 function handleRetry(): void {
   handleSearch();
 }
 
-// =============================================================================
-// INICIALIZACIÓN DE LA APLICACIÓN
-// =============================================================================
+function handleClearFavorites(): void {
+  if (confirm('¿Estás seguro de que quieres limpiar todos tus favoritos?')) {
+    clearAllFavorites();
+    // Re-renderizamos los datos actuales para actualizar la vista de los corazones
+    if (currentState.status === 'success' || currentData.length > 0) {
+      applyLocalFilters(currentData);
+    }
+  }
+}
 
-/**
- * Configura los event listeners de la aplicación.
- *
- * ## Event Listeners
- * Conectamos los elementos del DOM con sus manejadores de eventos.
- * Usamos debounce para el input para evitar demasiadas peticiones.
- */
+// Escuchamos el evento personalizado del corazón que creamos en CountryCard.ts
+function handleFavoriteChanged(): void {
+  // Si estamos en la vista de "Solo favoritos" y desmarcamos uno, debemos actualizar la lista
+  if (favoritesToggle.checked && currentData.length > 0) {
+    applyLocalFilters(currentData);
+  }
+}
+
 function setupEventListeners(): void {
-  // =========================================================================
-  // BÚSQUEDA CON DEBOUNCE
-  // =========================================================================
-  // El debounce retrasa la ejecución hasta que el usuario deja de escribir.
-  // Esto evita hacer una petición por cada tecla presionada.
-  // =========================================================================
   const debouncedSearch = debounce(() => {
     void handleSearch();
   }, 400);
 
-  // Input: búsqueda mientras se escribe (con debounce)
   searchInput.addEventListener('input', debouncedSearch);
-
-  // Botón de búsqueda: búsqueda inmediata
-  searchButton.addEventListener('click', () => {
-    void handleSearch();
+  searchButton.addEventListener('click', () => { void handleSearch(); });
+  searchInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') { void handleSearch(); }
+  });
+  
+  // Eventos para los filtros
+  regionFilter.addEventListener('change', () => {
+    if (currentData.length > 0) applyLocalFilters(currentData);
   });
 
-  // Enter en el input: búsqueda inmediata
-  searchInput.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
+  favoritesToggle.addEventListener('change', () => {
+    // Si hay datos, filtramos; si no, forzamos búsqueda
+    if (currentData.length > 0 || searchInput.value.trim().length > 0) {
       void handleSearch();
+    } else {
+      // Si no hay búsqueda previa y tocas favoritos, se queda en idle
+      // a menos que cambies el API para traer todos los favoritos
+      alert("Busca un país primero para filtrar entre tus favoritos.");
+      favoritesToggle.checked = false;
     }
   });
 
-  // Botón de reintentar
+  clearFavoritesBtn.addEventListener('click', handleClearFavorites);
   retryButton.addEventListener('click', handleRetry);
+
+  // Escuchar evento personalizado de cambio de favorito
+  document.addEventListener('favorite-changed', handleFavoriteChanged as EventListener);
 }
 
-/**
- * Inicializa la aplicación.
- *
- * ## Punto de entrada principal
- * Esta función se ejecuta cuando el DOM está completamente cargado.
- * Es el equivalente a `onCreate` en Android o `mounted` en Vue.
- */
 function initializeApp(): void {
   try {
-    // Obtenemos referencias a los elementos del DOM
     initializeElements();
-
-    // Configuramos los event listeners
     setupEventListeners();
-
-    // Mostramos el estado inicial
     render({ status: 'idle' });
-
-    // Enfocamos el input de búsqueda para UX
     searchInput.focus();
-
     console.log('Country Explorer inicializado correctamente');
   } catch (error) {
     console.error('Error al inicializar la aplicación:', error);
   }
 }
-
-// =============================================================================
-// ARRANQUE DE LA APLICACIÓN
-// =============================================================================
-// Usamos onDOMReady para asegurarnos de que el DOM esté listo antes de
-// intentar acceder a los elementos.
-// =============================================================================
 
 onDOMReady(initializeApp);
