@@ -57,6 +57,7 @@ let lastSearchQuery = '';
 // =============================================================================
 
 let searchInput: HTMLInputElement;
+let regionFilter: HTMLSelectElement; // nuevo
 let searchButton: HTMLButtonElement;
 let retryButton: HTMLButtonElement;
 let loadingState: HTMLElement;
@@ -72,6 +73,7 @@ let countriesList: HTMLElement;
  */
 function initializeElements(): void {
   searchInput = getRequiredElement<HTMLInputElement>('#searchInput');
+  regionFilter = getRequiredElement<HTMLSelectElement>('#regionFilter');// nuevo
   searchButton = getRequiredElement<HTMLButtonElement>('#searchButton');
   retryButton = getRequiredElement<HTMLButtonElement>('#retryButton');
   loadingState = getRequiredElement<HTMLElement>('#loadingState');
@@ -178,6 +180,7 @@ function render(state: UiState): void {
  */
 async function handleSearch(): Promise<void> {
   const query = searchInput.value.trim();
+  const selectedRegion = regionFilter.value;
 
   // Si la búsqueda está vacía, volvemos al estado inicial
   if (query.length === 0) {
@@ -186,43 +189,39 @@ async function handleSearch(): Promise<void> {
     return;
   }
 
-  // Evitamos búsquedas duplicadas
-  if (query === lastSearchQuery && currentState.status === 'success') {
+  // Evitamos búsquedas duplicadas (tomando en cuenta texto + región)
+  const currentSearchKey = `${query}-${selectedRegion}`;
+  if (currentSearchKey === lastSearchQuery && currentState.status === 'success') {
     return;
   }
 
-  lastSearchQuery = query;
+  lastSearchQuery = currentSearchKey;
 
   // Mostramos estado de carga
   render({ status: 'loading' });
 
   try {
-    // =========================================================================
-    // ASYNC/AWAIT Y MANEJO DE ERRORES
-    // =========================================================================
-    // await pausa la ejecución hasta que la Promise se resuelve.
-    // Si la Promise se rechaza, el error se captura en el catch.
-    // =========================================================================
     const countries = await searchCountries(query);
 
-    if (countries.length === 0) {
+    // NUEVO: Lógica de filtrado por región
+    const filteredCountries = selectedRegion 
+      ? countries.filter(country => country.region === selectedRegion)
+      : countries;
+
+    // Evaluamos el arreglo filtrado, no el original
+    if (filteredCountries.length === 0) {
       render({ status: 'empty' });
     } else {
-      render({ status: 'success', data: countries });
+      render({ status: 'success', data: filteredCountries });
     }
   } catch (error) {
-    // Determinamos el mensaje de error apropiado
     let message = 'Error desconocido al buscar países';
-
     if (error instanceof ApiError) {
       message = error.message;
     } else if (error instanceof Error) {
       message = error.message;
     }
-
     render({ status: 'error', message });
-
-    // Log para debugging (en producción usaríamos un servicio de logging)
     console.error('Error en búsqueda:', error);
   }
 }

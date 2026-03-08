@@ -39,14 +39,27 @@
         </p>
 
         <!-- Formulario de búsqueda -->
-        <div class="max-w-2xl mx-auto">
-          <div class="flex gap-4">
+        <div class="max-w-3xl mx-auto">
+          <div class="flex flex-col md:flex-row gap-4">
             <input
               type="text"
               id="searchInput"
               placeholder="Buscar país (ej: España, México, Argentina...)"
               class="flex-1 px-6 py-4 rounded-xl bg-slate-700 text-white placeholder-slate-400 border border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
             />
+            
+            <select
+              id="regionFilter"
+              class="px-6 py-4 rounded-xl bg-slate-700 text-white border border-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer appearance-none md:w-48"
+            >
+              <option value="">Todas las regiones</option>
+              <option value="Africa">África</option>
+              <option value="Americas">Américas</option>
+              <option value="Asia">Asia</option>
+              <option value="Europe">Europa</option>
+              <option value="Oceania">Oceanía</option>
+            </select>
+
             <button
               id="searchButton"
               class="px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-slate-900"
@@ -55,7 +68,6 @@
             </button>
           </div>
         </div>
-      </header>
 
       <!-- Contenedor principal -->
       <main>
